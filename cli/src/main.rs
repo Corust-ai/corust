@@ -3,6 +3,7 @@ mod connection;
 mod error;
 mod event;
 mod session;
+mod tui;
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -35,6 +36,10 @@ struct Cli {
     /// Non-interactive mode: execute a single prompt and exit.
     #[arg(short, long)]
     exec: Option<String>,
+
+    /// Launch the ratatui TUI instead of the line-based REPL.
+    #[arg(long)]
+    tui: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cli = Cli::parse();
+
     let project_dir = std::fs::canonicalize(&cli.project_dir)?;
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -59,16 +65,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let conn = Connection::spawn(acp_client, cli.server_bin.as_deref()).await?;
         let (session, info) = Session::start(&conn, project_dir).await?;
 
-        let agent_label = info.agent_name.as_deref().unwrap_or("agent");
-        eprintln!(
-            "corust session started ({}, {})",
-            agent_label, info.session_id.0
-        );
-
-        if let Some(prompt) = cli.exec {
-            run_single(&conn, &session, event_rx, &prompt).await?;
+        if cli.tui {
+            tui::run(&conn, &session, event_rx).await?;
         } else {
-            run_repl(&conn, &session, event_rx).await?;
+            let agent_label = info.agent_name.as_deref().unwrap_or("agent");
+            eprintln!(
+                "corust session started ({}, {})",
+                agent_label, info.session_id.0
+            );
+
+            if let Some(prompt) = cli.exec {
+                run_single(&conn, &session, event_rx, &prompt).await?;
+            } else {
+                run_repl(&conn, &session, event_rx).await?;
+            }
         }
 
         conn.shutdown().await;
