@@ -36,12 +36,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 // ---------------------------------------------------------------------------
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    // Pill color palette — each segment gets a distinct background.
-    const NAME_BG: Color = Color::Cyan;
-    const CWD_BG: Color = Color::Blue;
-    const GIT_BG: Color = Color::Magenta;
-    const STAT_BG: Color = Color::Rgb(58, 58, 68);
-    const GAP: &str = " "; // 1-char spacer between pills
+    let dim = Style::default().fg(Color::DarkGray);
+    let sep = Span::styled(" · ", dim);
 
     let name = if app.status.model.is_empty() {
         "corust"
@@ -49,101 +45,82 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         &app.status.model
     };
 
-    let mut spans: Vec<Span> = vec![];
+    let mut spans: Vec<Span> = vec![
+        Span::styled(
+            name.to_string(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+    ];
 
-    // 1. App name / model — brand pill
-    spans.push(Span::styled(
-        format!(" {name} "),
-        Style::default()
-            .fg(Color::Black)
-            .bg(NAME_BG)
-            .add_modifier(Modifier::BOLD),
-    ));
-
-    // 2. Cwd
+    // Cwd
     let short_cwd = std::path::Path::new(&app.status.cwd)
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| app.status.cwd.clone());
-    spans.push(Span::raw(GAP));
-    spans.push(Span::styled(
-        format!(" {short_cwd} "),
-        Style::default().fg(Color::White).bg(CWD_BG),
-    ));
+    spans.push(sep.clone());
+    spans.push(Span::styled(short_cwd, Style::default().fg(Color::White)));
 
-    // 3. Git branch
+    // Git branch
     if let Some(branch) = &app.status.git_branch {
-        spans.push(Span::raw(GAP));
+        spans.push(sep.clone());
         spans.push(Span::styled(
-            format!("  {branch} "),
-            Style::default().fg(Color::White).bg(GIT_BG),
+            format!(" {branch}"),
+            Style::default().fg(Color::Magenta),
         ));
     }
 
-    // 4. Turn count
-    spans.push(Span::raw(GAP));
+    // Turn count
+    spans.push(sep.clone());
     spans.push(Span::styled(
-        format!(" turns: {} ", app.status.turn_count),
-        Style::default().fg(Color::White).bg(STAT_BG),
+        format!("{} turns", app.status.turn_count),
+        dim,
     ));
 
-    // 5. Token usage
+    // Token usage
     if app.status.input_tokens > 0 || app.status.output_tokens > 0 {
-        spans.push(Span::raw(GAP));
+        spans.push(sep.clone());
         spans.push(Span::styled(
             format!(
-                " {}↓ {}↑ ",
+                "{}↓ {}↑",
                 format_tokens(app.status.input_tokens),
                 format_tokens(app.status.output_tokens),
             ),
-            Style::default().fg(Color::White).bg(STAT_BG),
+            dim,
         ));
     }
 
-    // 6. Context window — bg color signals pressure
+    // Context window
     if app.status.context_size > 0 {
         let pct = (app.status.context_used as f64 / app.status.context_size as f64 * 100.0) as u64;
-        let (fg, bg) = if pct > 80 {
-            (Color::White, Color::Red)
+        let ctx_color = if pct > 80 {
+            Color::Red
         } else if pct > 60 {
-            (Color::Black, Color::Yellow)
+            Color::Yellow
         } else {
-            (Color::White, STAT_BG)
+            Color::DarkGray
         };
-        spans.push(Span::raw(GAP));
-        spans.push(Span::styled(
-            format!(
-                " ctx: {}/{} ({pct}%) ",
-                format_tokens(app.status.context_used),
-                format_tokens(app.status.context_size),
-            ),
-            Style::default().fg(fg).bg(bg),
-        ));
+        spans.push(sep.clone());
+        spans.push(Span::styled(format!("ctx {pct}%"), Style::default().fg(ctx_color)));
     }
 
-    // 7. Cost
+    // Cost
     if let Some((amount, ref currency)) = app.status.cost {
-        spans.push(Span::raw(GAP));
-        spans.push(Span::styled(
-            format!(" ${amount:.4} {currency} "),
-            Style::default().fg(Color::White).bg(STAT_BG),
-        ));
+        spans.push(sep.clone());
+        spans.push(Span::styled(format!("${amount:.4} {currency}"), dim));
     }
 
-    // 8. Mode indicator — floating, no pill bg
+    // Mode indicator
     if app.busy {
+        spans.push(Span::styled("  ", dim));
         spans.push(Span::styled(
-            format!("  {} thinking ", app.spinner.frame()),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            format!("{} thinking", app.spinner.frame()),
+            Style::default().fg(Color::Yellow),
         ));
     } else if app.pending_permission.is_some() {
+        spans.push(Span::styled("  ", dim));
         spans.push(Span::styled(
-            "  ⚠ approval needed ",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            "⚠ approval needed",
+            Style::default().fg(Color::Yellow),
         ));
     }
 

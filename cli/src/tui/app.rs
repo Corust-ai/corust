@@ -209,9 +209,7 @@ impl App {
         Self {
             input: String::new(),
             input_cursor: 0,
-            blocks: vec![Block::System {
-                message: "Welcome to corust. Type a message and press Enter.".into(),
-            }],
+            blocks: Vec::new(),
             scroll: ScrollState::new(),
             should_quit: false,
             busy: false,
