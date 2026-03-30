@@ -62,16 +62,22 @@ async fn event_loop(
             // Keyboard / terminal events.
             Some(Ok(term_event)) = term_events.next() => {
                 if let TermEvent::Key(key) = term_event {
-                    let submitted = handle_key(&mut app, key);
-
-                    // If the user submitted text and we're not busy, start a prompt.
-                    if let Some(text) = submitted {
-                        if !app.busy {
+                    match handle_key(&mut app, key) {
+                        KeyAction::Submit(text) if !app.busy => {
                             app.busy = true;
                             prompt_fut = Some(Box::pin(async move {
                                 session.prompt(conn, &text).await
                             }));
                         }
+                        KeyAction::CancelTurn => {
+                            // Drop the prompt future to cancel the turn.
+                            prompt_fut = None;
+                            app.turn_finished();
+                            app.blocks.push(app::Block::System {
+                                message: "Cancelled.".into(),
+                            });
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -112,10 +118,18 @@ async fn event_loop(
     Ok(())
 }
 
+/// Result of handling a key event.
+enum KeyAction {
+    /// No special action needed.
+    None,
+    /// User submitted text — start a prompt.
+    Submit(String),
+    /// User pressed Ctrl+C while busy — cancel the current turn.
+    CancelTurn,
+}
+
 /// Map key events to App mutations (TEA: Update).
-///
-/// Returns `Some(text)` if the user submitted input.
-fn handle_key(app: &mut App, key: KeyEvent) -> Option<String> {
+fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
     // If a permission prompt is active, handle permission keys.
     if app.pending_permission.is_some() {
         match key.code {
@@ -126,35 +140,56 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Option<String> {
             KeyCode::Esc => app.cancel_permission(),
             _ => {}
         }
-        return None;
+        return KeyAction::None;
     }
 
     match (key.modifiers, key.code) {
-        // Quit
-        (KeyModifiers::CONTROL, KeyCode::Char('c' | 'd')) => {
+        // Ctrl+C: cancel turn if busy, quit if idle.
+        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+            if app.busy {
+                KeyAction::CancelTurn
+            } else {
+                app.should_quit = true;
+                KeyAction::None
+            }
+        }
+
+        // Ctrl+D: always quit.
+        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
             app.should_quit = true;
-            None
+            KeyAction::None
+        }
+
+        // Tab: toggle thinking block collapse.
+        (_, KeyCode::Tab) => {
+            app.toggle_thinking();
+            KeyAction::None
         }
 
         // Submit input
-        (_, KeyCode::Enter) => app.submit_input(),
+        (_, KeyCode::Enter) => {
+            match app.submit_input() {
+                Some(text) => KeyAction::Submit(text),
+                None => KeyAction::None,
+            }
+        }
 
         // Text editing
-        (_, KeyCode::Backspace) => { app.delete_char_before_cursor(); None }
-        (_, KeyCode::Left) => { app.move_cursor_left(); None }
-        (_, KeyCode::Right) => { app.move_cursor_right(); None }
-        (_, KeyCode::Char(c)) => { app.insert_char(c); None }
+        (_, KeyCode::Backspace) => { app.delete_char_before_cursor(); KeyAction::None }
+        (_, KeyCode::Left) => { app.move_cursor_left(); KeyAction::None }
+        (_, KeyCode::Right) => { app.move_cursor_right(); KeyAction::None }
+        (_, KeyCode::Char(c)) => { app.insert_char(c); KeyAction::None }
 
         // Scroll
         (_, KeyCode::PageUp) => {
             app.scroll_offset = app.scroll_offset.saturating_add(5);
-            None
+            KeyAction::None
         }
         (_, KeyCode::PageDown) => {
             app.scroll_offset = app.scroll_offset.saturating_sub(5);
-            None
+            KeyAction::None
         }
 
-        _ => None,
+        _ => KeyAction::None,
     }
 }
