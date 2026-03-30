@@ -24,6 +24,12 @@ pub struct App {
     pub status: StatusBar,
     /// Pending permission request (if any).
     pub pending_permission: Option<PendingPermission>,
+    /// Input history for up/down recall.
+    pub history: Vec<String>,
+    /// Current position in history (None = editing new input).
+    pub history_cursor: Option<usize>,
+    /// Stashed input when browsing history.
+    pub history_stash: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +55,9 @@ pub enum Block {
         locations: Vec<String>,
         output: Option<String>,
     },
+
+    /// Fenced code block extracted from agent response.
+    CodeBlock { lang: String, code: String },
 
     /// Unified diff for file edits.
     Diff { path: String, lines: Vec<DiffLine> },
@@ -107,6 +116,9 @@ impl App {
                 git_branch: None,
             },
             pending_permission: None,
+            history: Vec::new(),
+            history_cursor: None,
+            history_stash: String::new(),
         }
     }
 
@@ -123,6 +135,7 @@ impl App {
                         streaming: true,
                     });
                 }
+                split_code_blocks(&mut self.blocks);
                 self.scroll_offset = 0;
             }
             Event::AgentThought(text) => {
@@ -321,11 +334,47 @@ impl App {
         if text.is_empty() {
             return None;
         }
+        self.history.push(text.clone());
+        self.history_cursor = None;
+        self.history_stash.clear();
         self.blocks.push(Block::UserInput { text: text.clone() });
         self.input.clear();
         self.cursor = 0;
         self.scroll_offset = 0;
         Some(text)
+    }
+
+    // -- History navigation --
+
+    pub fn history_prev(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let idx = match self.history_cursor {
+            None => {
+                // Entering history: stash current input.
+                self.history_stash = self.input.clone();
+                self.history.len() - 1
+            }
+            Some(0) => return, // already at oldest
+            Some(i) => i - 1,
+        };
+        self.history_cursor = Some(idx);
+        self.input = self.history[idx].clone();
+        self.cursor = self.input.len();
+    }
+
+    pub fn history_next(&mut self) {
+        let Some(idx) = self.history_cursor else { return };
+        if idx + 1 >= self.history.len() {
+            // Back to current input.
+            self.history_cursor = None;
+            self.input = std::mem::take(&mut self.history_stash);
+        } else {
+            self.history_cursor = Some(idx + 1);
+            self.input = self.history[idx + 1].clone();
+        }
+        self.cursor = self.input.len();
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -352,6 +401,79 @@ impl App {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Scan the last `AgentText` block for completed fenced code blocks.
+/// Split them into `AgentText` + `CodeBlock` segments, keeping any
+/// incomplete fence (mid-stream) as trailing `AgentText`.
+fn split_code_blocks(blocks: &mut Vec<Block>) {
+    let Some(Block::AgentText { content, streaming }) = blocks.last() else { return };
+
+    // Quick check: does the content even contain a fence?
+    if !content.contains("```") {
+        return;
+    }
+
+    let raw = content.clone();
+    let is_streaming = *streaming;
+    blocks.pop();
+
+    let mut remaining = raw.as_str();
+
+    while let Some(fence_pos) = remaining.find("```") {
+        // Text before the opening fence.
+        let before = &remaining[..fence_pos];
+        if !before.trim().is_empty() {
+            blocks.push(Block::AgentText {
+                content: before.to_string(),
+                streaming: false,
+            });
+        }
+
+        let after_backticks = &remaining[fence_pos + 3..];
+
+        // Extract language from the opening fence line.
+        let lang_end = after_backticks.find('\n').unwrap_or(after_backticks.len());
+        let lang = after_backticks[..lang_end].trim().to_string();
+
+        // Start of code content (after the lang line + newline).
+        let code_start_offset = fence_pos + 3 + lang_end;
+        if code_start_offset >= remaining.len() {
+            // Incomplete fence at very end — keep as text.
+            blocks.push(Block::AgentText {
+                content: remaining[fence_pos..].to_string(),
+                streaming: is_streaming,
+            });
+            remaining = "";
+            break;
+        }
+
+        let code_area = &remaining[code_start_offset + 1..]; // +1 skip newline
+
+        if let Some(close_pos) = code_area.find("```") {
+            let code = code_area[..close_pos].trim_end_matches('\n').to_string();
+            blocks.push(Block::CodeBlock { lang, code });
+
+            // Advance past the closing ```.
+            let after_close = &code_area[close_pos + 3..];
+            remaining = after_close.strip_prefix('\n').unwrap_or(after_close);
+        } else {
+            // No closing fence yet — keep everything from fence_pos as streaming text.
+            blocks.push(Block::AgentText {
+                content: remaining[fence_pos..].to_string(),
+                streaming: is_streaming,
+            });
+            remaining = "";
+            break;
+        }
+    }
+
+    if !remaining.is_empty() {
+        blocks.push(Block::AgentText {
+            content: remaining.to_string(),
+            streaming: is_streaming,
+        });
+    }
+}
 
 /// Extract plain text from ToolCallContent blocks.
 fn extract_text_content(content: &[ToolCallContent]) -> Option<String> {

@@ -174,6 +174,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
             }
         }
 
+        // Input history
+        (_, KeyCode::Up) => { app.history_prev(); KeyAction::None }
+        (_, KeyCode::Down) => { app.history_next(); KeyAction::None }
+
         // Text editing
         (_, KeyCode::Backspace) => { app.delete_char_before_cursor(); KeyAction::None }
         (_, KeyCode::Left) => { app.move_cursor_left(); KeyAction::None }

@@ -6,6 +6,8 @@ use ratatui::widgets::{Block as UiBlock, Borders, Paragraph, Wrap};
 
 use super::app::{App, Block, DiffLine};
 
+const CODE_BG: Color = Color::Rgb(30, 30, 46);
+
 /// Render the full UI (TEA: View).
 ///
 /// Three zones top-to-bottom:
@@ -125,6 +127,33 @@ fn render_block<'a>(block: &'a Block, app: &'a App, lines: &mut Vec<Line<'a>>) {
                     Style::default().fg(Color::Cyan),
                 )));
             }
+        }
+
+        Block::CodeBlock { lang, code } => {
+            // Header: language label
+            let label = if lang.is_empty() { "code" } else { lang.as_str() };
+            lines.push(Line::from(Span::styled(
+                format!("  ╭─ {label} "),
+                Style::default().fg(Color::DarkGray),
+            )));
+
+            // Code lines with line numbers.
+            let code_style = Style::default().fg(Color::White).bg(CODE_BG);
+            let lineno_style = Style::default().fg(Color::DarkGray).bg(CODE_BG);
+            let code_lines: Vec<&str> = code.lines().collect();
+            let width = code_lines.len().to_string().len();
+
+            for (i, line) in code_lines.iter().enumerate() {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {:>width$} │ ", i + 1), lineno_style),
+                    Span::styled(*line, code_style),
+                ]));
+            }
+
+            lines.push(Line::from(Span::styled(
+                "  ╰───",
+                Style::default().fg(Color::DarkGray),
+            )));
         }
 
         Block::Thinking { content, collapsed } => {
