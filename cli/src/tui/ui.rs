@@ -215,13 +215,8 @@ fn render_block(block: &Block, perm_options: &[(String, String)], lines: &mut Ve
         }
 
         Block::CodeBlock { lang, code } => {
-            // Standalone code blocks (extracted from streaming) — rendered
-            // with the same markdown code block renderer.
-            let fenced = if lang.is_empty() {
-                format!("```\n{code}\n```")
-            } else {
-                format!("```{lang}\n{code}\n```")
-            };
+            // Standalone code blocks — render through markdown for consistent styling.
+            let fenced = format!("```{lang}\n{code}\n```");
             let md_lines = render_markdown(&fenced);
             lines.extend(md_lines);
         }

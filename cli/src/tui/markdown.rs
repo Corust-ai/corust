@@ -89,9 +89,12 @@ impl MdRenderer {
                 }
             }
             Event::Code(code) => {
+                // Render inline code with background, no visible backticks.
                 self.current_spans.push(Span::styled(
-                    format!("`{code}`"),
-                    Style::default().fg(Color::Cyan),
+                    code.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .bg(Color::Rgb(40, 40, 55)),
                 ));
             }
             Event::SoftBreak => {
@@ -346,12 +349,44 @@ impl MdRenderer {
             return;
         }
 
+        let border_style = Style::default().fg(Color::DarkGray);
+        let bg = Style::default().bg(Color::Rgb(30, 30, 46));
+        let lineno_style = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 46));
+
+        // Header with language label.
+        let label = if lang.is_empty() { "code" } else { lang };
+        self.lines.push(Line::from(Span::styled(
+            format!("  ╭─ {label} "),
+            border_style,
+        )));
+
+        // Highlighted code lines with line numbers.
         let highlighted = highlight_to_lines(code, lang);
-        for line in highlighted {
-            let mut spans = vec![Span::raw("  ")];
-            spans.extend(line.spans);
+        let width = highlighted.len().to_string().len();
+
+        for (i, line) in highlighted.iter().enumerate() {
+            let mut spans = vec![
+                Span::styled(format!("  {:>width$} │ ", i + 1), lineno_style),
+            ];
+            for span in &line.spans {
+                // Preserve syntax color but add code background.
+                spans.push(Span::styled(
+                    span.content.to_string(),
+                    span.style.bg(Color::Rgb(30, 30, 46)),
+                ));
+            }
+            // Pad with background if the line has no spans.
+            if line.spans.is_empty() {
+                spans.push(Span::styled(" ", bg));
+            }
             self.lines.push(Line::from(spans));
         }
+
+        // Footer.
+        self.lines.push(Line::from(Span::styled(
+            "  ╰───",
+            border_style,
+        )));
     }
 
     fn finish(mut self) -> Vec<Line<'static>> {
