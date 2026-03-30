@@ -166,7 +166,9 @@ pub enum SlashResult {
 }
 
 /// Built-in slash commands.
-pub const SLASH_COMMANDS: &[&str] = &["/clear", "/exit", "/model", "/quit", "/undo"];
+pub const SLASH_COMMANDS: &[&str] = &[
+    "/clear", "/exit", "/help", "/model", "/quit", "/status", "/undo",
+];
 
 // ---------------------------------------------------------------------------
 // App
@@ -196,6 +198,10 @@ pub struct App {
     // Slash completion
     pub completions: Vec<&'static str>,
     pub completion_idx: Option<usize>,
+
+    /// Whether streaming deltas were received for the current turn.
+    /// Used to avoid appending a duplicate full AgentMessage after streaming.
+    pub has_received_delta: bool,
 }
 
 impl App {
@@ -229,6 +235,7 @@ impl App {
             history_stash: String::new(),
             completions: Vec::new(),
             completion_idx: None,
+            has_received_delta: false,
         }
     }
 
@@ -239,6 +246,7 @@ impl App {
     pub fn handle_acp_event(&mut self, event: Event) {
         match event {
             Event::AgentText(text) => {
+                self.has_received_delta = true;
                 if let Some(Block::AgentText { content, .. }) = self.blocks.last_mut() {
                     content.push_str(&text);
                 } else {
@@ -381,11 +389,32 @@ impl App {
         }
     }
 
+    /// Resolve permission by shortcut key: y = first option, a = second (if exists), n = cancel.
+    pub fn resolve_permission_key(&mut self, key: char) {
+        match key {
+            'y' => self.resolve_permission(0),
+            'a' => {
+                // "always" is typically the second option.
+                let idx = if self
+                    .pending_permission
+                    .as_ref()
+                    .is_some_and(|p| p.options.len() > 1)
+                {
+                    1
+                } else {
+                    0
+                };
+                self.resolve_permission(idx);
+            }
+            'n' | _ => self.cancel_permission(),
+        }
+    }
+
     pub fn cancel_permission(&mut self) {
         if let Some(perm) = self.pending_permission.take() {
             for block in self.blocks.iter_mut().rev() {
                 if let Block::PermissionRequest { resolved, .. } = block {
-                    *resolved = Some("cancelled".into());
+                    *resolved = Some("denied".into());
                     break;
                 }
             }
@@ -399,6 +428,7 @@ impl App {
 
     pub fn turn_finished(&mut self, usage: Option<agent_client_protocol::Usage>) {
         self.busy = false;
+        self.has_received_delta = false;
         self.status.turn_count += 1;
         if let Some(u) = usage {
             self.status.input_tokens = u.input_tokens;
@@ -638,21 +668,95 @@ impl App {
     }
 
     pub fn handle_slash_command(&mut self) -> Option<SlashResult> {
-        let cmd = self.input.trim();
+        let raw = self.input.trim().to_string();
+        let (cmd, args) = match raw[1..].split_once(' ') {
+            Some((c, a)) => (c, a.trim()),
+            None => (&raw[1..], ""),
+        };
+
         let result = match cmd {
-            "/quit" | "/exit" => {
+            "quit" | "exit" | "q" => {
                 self.should_quit = true;
                 Some(SlashResult::Handled)
             }
-            "/clear" => {
+            "clear" => {
                 self.blocks.clear();
                 self.blocks.push(Block::System {
                     message: "Cleared.".into(),
                 });
                 Some(SlashResult::Handled)
             }
-            "/undo" => Some(self.undo_last_edit()),
-            _ if cmd.starts_with('/') => None,
+            "undo" => Some(self.undo_last_edit()),
+            "help" | "h" | "?" => {
+                self.blocks.push(Block::System {
+                    message: "/help     Show this help\n\
+                              /model    Show or switch model (/model <id>)\n\
+                              /status   Session info\n\
+                              /clear    Clear conversation\n\
+                              /undo     Undo last file edit\n\
+                              /quit     Exit"
+                        .into(),
+                });
+                self.scroll.request_auto_scroll();
+                Some(SlashResult::Handled)
+            }
+            "status" => {
+                let model = if self.status.model.is_empty() {
+                    "-"
+                } else {
+                    &self.status.model
+                };
+                let branch = self
+                    .status
+                    .git_branch
+                    .as_deref()
+                    .unwrap_or("-");
+                let mut info = format!(
+                    "Model: {model}\n\
+                     Turns: {}\n\
+                     Path:  {}\n\
+                     Git:   {branch}",
+                    self.status.turn_count, self.status.cwd,
+                );
+                if self.status.input_tokens > 0 {
+                    info.push_str(&format!(
+                        "\nTokens: {} in / {} out",
+                        self.status.input_tokens, self.status.output_tokens,
+                    ));
+                }
+                if self.status.context_size > 0 {
+                    info.push_str(&format!(
+                        "\nContext: {} / {} tokens",
+                        self.status.context_used, self.status.context_size,
+                    ));
+                }
+                if let Some((amount, ref currency)) = self.status.cost {
+                    info.push_str(&format!("\nCost: ${amount:.4} {currency}"));
+                }
+                self.blocks.push(Block::System { message: info });
+                self.scroll.request_auto_scroll();
+                Some(SlashResult::Handled)
+            }
+            "model" => {
+                if args.is_empty() {
+                    let model = if self.status.model.is_empty() {
+                        "-"
+                    } else {
+                        &self.status.model
+                    };
+                    self.blocks.push(Block::System {
+                        message: format!("Current model: {model}\nUsage: /model <model-id>"),
+                    });
+                } else {
+                    // Model switching would need ACP support; store for now.
+                    self.status.model = args.to_string();
+                    self.blocks.push(Block::System {
+                        message: format!("Model set to: {args}"),
+                    });
+                }
+                self.scroll.request_auto_scroll();
+                Some(SlashResult::Handled)
+            }
             _ => None,
         };
         if result.is_some() {

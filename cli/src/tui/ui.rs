@@ -474,12 +474,13 @@ fn wrap_line_into(line: &Line<'static>, max_width: usize, out: &mut Vec<Line<'st
 // ---------------------------------------------------------------------------
 
 fn draw_input(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let (title, border_style) = if app.pending_permission.is_some() {
-        (
-            "Permission: press 0-9 to select, Esc to cancel",
-            Style::default().fg(Color::Yellow),
-        )
-    } else if app.busy {
+    // Approval mode: dedicated styled bar.
+    if app.pending_permission.is_some() {
+        draw_approval_input(frame, area);
+        return;
+    }
+
+    let (title, border_style) = if app.busy {
         (
             "Waiting… (Ctrl+C to interrupt)",
             Style::default().fg(Color::DarkGray),
@@ -507,7 +508,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     frame.render_widget(input_widget, area);
 
     // Cursor
-    if !app.busy && app.pending_permission.is_none() {
+    if !app.busy {
         let (row, col) = app.cursor_row_col();
         let cursor_x = area.x + 1 + col as u16;
         let cursor_y = area.y + 1 + row as u16;
@@ -515,6 +516,45 @@ fn draw_input(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
     }
+}
+
+/// Dedicated approval input bar with styled y/n/a buttons.
+fn draw_approval_input(frame: &mut Frame, area: ratatui::layout::Rect) {
+    let input = Paragraph::new(Line::from(vec![
+        Span::styled(
+            " [y] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("yes  "),
+        Span::styled(
+            " [n] ",
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("no  "),
+        Span::styled(
+            " [a] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("always  "),
+        Span::styled(
+            " [Esc] ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw("cancel"),
+    ]))
+    .block(
+        UiBlock::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow))
+            .title("⚠ Permission required"),
+    );
+    frame.render_widget(input, area);
 }
 
 fn completion_ghost(app: &App) -> Option<String> {

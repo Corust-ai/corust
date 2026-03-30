@@ -154,6 +154,7 @@ async fn event_loop(
                         KeyAction::Submit(text) if !app.busy => {
                             app.busy = true;
                             app.spinner.reset();
+                            app.has_received_delta = false;
                             prompt_fut = Some(Box::pin(async move {
                                 session.prompt(conn, &text).await
                             }));
@@ -269,9 +270,12 @@ enum KeyAction {
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) -> KeyAction {
-    // Permission mode.
+    // Permission mode: y/n/a or digit keys.
     if app.pending_permission.is_some() {
         match key.code {
+            KeyCode::Char('y') => app.resolve_permission_key('y'),
+            KeyCode::Char('a') => app.resolve_permission_key('a'),
+            KeyCode::Char('n') => app.resolve_permission_key('n'),
             KeyCode::Char(c @ '0'..='9') => {
                 app.resolve_permission((c as u8 - b'0') as usize);
             }
