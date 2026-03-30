@@ -36,96 +36,111 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 // ---------------------------------------------------------------------------
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    // Pill color palette — each segment gets a distinct background.
+    const NAME_BG: Color = Color::Cyan;
+    const CWD_BG: Color = Color::Blue;
+    const GIT_BG: Color = Color::Magenta;
+    const STAT_BG: Color = Color::Rgb(58, 58, 68);
+    const GAP: &str = " "; // 1-char spacer between pills
+
     let name = if app.status.model.is_empty() {
         "corust"
     } else {
         &app.status.model
     };
 
-    let pill_style = Style::default().fg(Color::Black).bg(Color::DarkGray);
+    let mut spans: Vec<Span> = vec![];
 
-    let mut spans = vec![
-        Span::styled(
-            format!(" {name} "),
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
+    // 1. App name / model — brand pill
+    spans.push(Span::styled(
+        format!(" {name} "),
+        Style::default()
+            .fg(Color::Black)
+            .bg(NAME_BG)
+            .add_modifier(Modifier::BOLD),
+    ));
 
-    // Cwd (shortened to last component)
+    // 2. Cwd
     let short_cwd = std::path::Path::new(&app.status.cwd)
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| app.status.cwd.clone());
-    spans.push(Span::styled(format!(" {short_cwd} "), pill_style));
+    spans.push(Span::raw(GAP));
+    spans.push(Span::styled(
+        format!(" {short_cwd} "),
+        Style::default().fg(Color::White).bg(CWD_BG),
+    ));
 
-    // Git branch
+    // 3. Git branch
     if let Some(branch) = &app.status.git_branch {
+        spans.push(Span::raw(GAP));
         spans.push(Span::styled(
             format!("  {branch} "),
-            Style::default().fg(Color::Black).bg(Color::DarkGray),
+            Style::default().fg(Color::White).bg(GIT_BG),
         ));
     }
 
-    // Turn count
+    // 4. Turn count
+    spans.push(Span::raw(GAP));
     spans.push(Span::styled(
         format!(" turns: {} ", app.status.turn_count),
-        pill_style,
+        Style::default().fg(Color::White).bg(STAT_BG),
     ));
 
-    // Token usage
+    // 5. Token usage
     if app.status.input_tokens > 0 || app.status.output_tokens > 0 {
+        spans.push(Span::raw(GAP));
         spans.push(Span::styled(
             format!(
                 " {}↓ {}↑ ",
                 format_tokens(app.status.input_tokens),
                 format_tokens(app.status.output_tokens),
             ),
-            pill_style,
+            Style::default().fg(Color::White).bg(STAT_BG),
         ));
     }
 
-    // Context window
+    // 6. Context window — bg color signals pressure
     if app.status.context_size > 0 {
         let pct = (app.status.context_used as f64 / app.status.context_size as f64 * 100.0) as u64;
-        let ctx_color = if pct > 80 {
-            Color::Red
+        let (fg, bg) = if pct > 80 {
+            (Color::White, Color::Red)
         } else if pct > 60 {
-            Color::Yellow
+            (Color::Black, Color::Yellow)
         } else {
-            Color::Black
+            (Color::White, STAT_BG)
         };
+        spans.push(Span::raw(GAP));
         spans.push(Span::styled(
             format!(
                 " ctx: {}/{} ({pct}%) ",
                 format_tokens(app.status.context_used),
                 format_tokens(app.status.context_size),
             ),
-            Style::default().fg(ctx_color).bg(Color::DarkGray),
+            Style::default().fg(fg).bg(bg),
         ));
     }
 
-    // Cost
+    // 7. Cost
     if let Some((amount, ref currency)) = app.status.cost {
+        spans.push(Span::raw(GAP));
         spans.push(Span::styled(
             format!(" ${amount:.4} {currency} "),
-            pill_style,
+            Style::default().fg(Color::White).bg(STAT_BG),
         ));
     }
 
-    // Mode indicator (rightmost)
+    // 8. Mode indicator — floating, no pill bg
     if app.busy {
         spans.push(Span::styled(
-            format!(" {} thinking ", app.spinner.frame()),
+            format!("  {} thinking ", app.spinner.frame()),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ));
     } else if app.pending_permission.is_some() {
         spans.push(Span::styled(
-            " ⚠ approval needed ",
+            "  ⚠ approval needed ",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
