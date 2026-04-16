@@ -49,18 +49,23 @@ detect_platform() {
     echo "${os}-${arch}"
 }
 
-# ── resolve version ──────────────────────────────────────────────────────────
+# ── build download URL ───────────────────────────────────────────────────────
+#
+# GitHub serves two canonical redirect endpoints that DO NOT consume API quota:
+#
+#   releases/latest/download/<asset>       → latest release
+#   releases/download/<tag>/<asset>        → specific tag
+#
+# We use these directly so the installer isn't subject to GitHub's 60 req/hour
+# unauthenticated API rate limit.
 
-latest_version() {
-    url="https://api.github.com/repos/${REPO}/releases/latest"
-    tag="$(
-        curl --proto '=https' --tlsv1.2 -fsSL "$url" \
-            | grep '"tag_name"' \
-            | head -n1 \
-            | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
-    )"
-    [ -n "$tag" ] || error "failed to determine latest release from ${REPO}"
-    echo "$tag"
+download_url() {
+    asset="$1"
+    if [ -n "${CORUST_VERSION:-}" ]; then
+        echo "https://github.com/${REPO}/releases/download/${CORUST_VERSION}/${asset}"
+    else
+        echo "https://github.com/${REPO}/releases/latest/download/${asset}"
+    fi
 }
 
 # ── install directory ────────────────────────────────────────────────────────
@@ -101,12 +106,12 @@ main() {
     need_cmd install
 
     platform="$(detect_platform)"
-    version="${CORUST_VERSION:-$(latest_version)}"
     asset="cli-${platform}.tar.gz"
-    url="https://github.com/${REPO}/releases/download/${version}/${asset}"
+    url="$(download_url "$asset")"
     install_dir="$(resolve_install_dir)"
+    version_label="${CORUST_VERSION:-latest}"
 
-    info "Installing Corust CLI ${version} (${platform})"
+    info "Installing Corust CLI (${version_label}, ${platform})"
     echo "  from: ${url}"
     echo "  to:   ${install_dir}/${BIN_NAME}"
     echo
@@ -115,7 +120,7 @@ main() {
     trap 'rm -rf "$tmp"' EXIT
 
     curl --proto '=https' --tlsv1.2 -fSL --progress-bar "$url" -o "${tmp}/${asset}" \
-        || error "download failed — version '${version}' may not exist for platform '${platform}'"
+        || error "download failed — '${version_label}' may not exist for platform '${platform}'. See https://github.com/${REPO}/releases"
 
     tar -xzf "${tmp}/${asset}" -C "$tmp"
 
